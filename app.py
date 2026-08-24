@@ -28,7 +28,6 @@ IMG_PATH = os.path.join(CURRENT_DIR, "image.png")
 CALENDAR_FILE = os.path.join(CURRENT_DIR, "calendar_data.json")
 EXT_LOAD_FILE = os.path.join(CURRENT_DIR, "external_load.csv")
 
-# ROSTER U19 NEXT GEN + U17 GOLD 
 ROSTER = sorted([
     "Appetiti Arianna", "Trezzi Francesca", "Bettoni Rebecca", "Rovello Giorgia",
     "Magni Emilia", "Connelli Grace", "Bianchi Emma", "Alfieri Fiamma",
@@ -69,11 +68,10 @@ def load_calendar_data(url):
                 except: pass
             return cal_data
         except gspread.WorksheetNotFound:
-            pass # Il tab non esiste ancora, verrà creato al primo salvataggio
+            pass 
         except Exception as e:
-            pass # Ignora e passa al locale
+            pass 
 
-    # Fallback Locale
     if os.path.exists(CALENDAR_FILE):
         with open(CALENDAR_FILE, 'r') as f: return json.load(f)
     return {}
@@ -99,9 +97,8 @@ def save_calendar_data(data, url):
             except TypeError:
                 ws.update("A1", rows)
         except Exception as e:
-            st.error(f"Impossibile salvare il Calendario su Google Sheets. Hai condiviso il file con il Service Account? Errore: {e}")
+            st.error(f"Impossibile salvare il Calendario su Google Sheets. Errore: {e}")
             
-    # Fallback / Backup Locale
     with open(CALENDAR_FILE, 'w') as f: json.dump(data, f, indent=4)
 
 def load_ext_load(url):
@@ -114,23 +111,29 @@ def load_ext_load(url):
             records = ws.get_all_records()
             if records:
                 df = pd.DataFrame(records)
-                df['Data'] = pd.to_datetime(df['Data']).dt.normalize()
+                # FIX: Rimuovi gli errori e le date vuote al caricamento
+                df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.normalize()
+                df = df.dropna(subset=['Data'])
                 return df
         except gspread.WorksheetNotFound:
             pass
         except Exception as e:
             pass
 
-    # Fallback Locale
     if os.path.exists(EXT_LOAD_FILE):
         df = pd.read_csv(EXT_LOAD_FILE)
-        df['Data'] = pd.to_datetime(df['Data']).dt.normalize()
+        df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.normalize()
+        df = df.dropna(subset=['Data'])
         return df
     return pd.DataFrame(columns=['Data', 'Esercitazione', 'Peso', 'Minuti', 'Carico_Esterno'])
 
 def save_ext_load(df, url):
     client = get_gclient()
     sheet_id = get_sheet_id(url)
+    df_out = df.copy()
+    # FIX: Sicurezza extra in scrittura
+    df_out = df_out.dropna(subset=['Data']) 
+    
     if client and sheet_id:
         try:
             sh = client.open_by_key(sheet_id)
@@ -139,7 +142,6 @@ def save_ext_load(df, url):
             except gspread.WorksheetNotFound:
                 ws = sh.add_worksheet(title="Carico_Esterno", rows="1000", cols="5")
             
-            df_out = df.copy()
             df_out['Data'] = df_out['Data'].dt.strftime('%Y-%m-%d')
             rows = [df_out.columns.values.tolist()] + df_out.values.tolist()
             
@@ -151,8 +153,7 @@ def save_ext_load(df, url):
         except Exception as e:
             st.error(f"Impossibile salvare il Carico Esterno su Google Sheets.")
 
-    # Fallback / Backup Locale
-    df.to_csv(EXT_LOAD_FILE, index=False)
+    df_out.to_csv(EXT_LOAD_FILE, index=False)
 
 # --- FUNZIONI CALCOLI ---
 def calc_ewma(series, span):
@@ -419,11 +420,17 @@ elif page == "📈 Gestione Carico Esterno":
         with col_ed1:
             st.subheader("Modifica / Elimina Record")
             df_storico = df_ext.sort_values('Data', ascending=False).copy()
+            # FIX: Eliminiamo qualsiasi riga vuota dal dataset prima di mostrare
+            df_storico = df_storico.dropna(subset=['Data']) 
+            
             edited_df = st.data_editor(
                 df_storico, num_rows="dynamic", use_container_width=True, hide_index=True,
                 column_config={"Data": st.column_config.DatetimeColumn("Data", format="DD/MM/YYYY")}
             )
+            
             if not edited_df.equals(df_storico):
+                # FIX: Quando l'utente salva, ignoriamo se ha lasciato la riga mezza vuota
+                edited_df = edited_df.dropna(subset=['Data'])
                 edited_df['Carico_Esterno'] = edited_df['Peso'] * edited_df['Minuti']
                 save_ext_load(edited_df, url_google)
                 st.success("Modifiche salvate con successo!")
@@ -431,8 +438,11 @@ elif page == "📈 Gestione Carico Esterno":
 
         with col_ed2:
             st.subheader("Tracciamento Allenamenti (Diario Coach)")
+            # FIX: Filtra in sicurezza le date
+            df_storico = df_storico.dropna(subset=['Data'])
             giorni = df_storico['Data'].unique()
             for g in giorni[:10]:
+                if pd.isna(g): continue # FIX: Se la data è non-valida la ignora
                 dati_giorno = df_storico[df_storico['Data'] == g]
                 data_str = pd.to_datetime(g).strftime('%d/%m/%Y')
                 carico_tot = dati_giorno['Carico_Esterno'].sum()
