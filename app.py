@@ -575,9 +575,59 @@ elif page == "📅 Calendario & Partite":
                 st.rerun()
 
 elif page == "📚 Formazione & Spiegazioni":
-    st.title("Guida ai Parametri per Allenatori")
-    with st.expander("1. Cos'è l'RPE e il Carico Interno (sRPE)?"):
+    st.title("🧠 Guida Pratica per lo Staff Tecnico")
+    st.markdown("""
+    Questa sezione è pensata per aiutare gli allenatori e lo staff a trasformare i numeri in **decisioni pratiche sul campo**. 
+    L'obiettivo non è guardare calcoli accademici complessi, ma rispondere a due domande fondamentali per vincere le partite: *Le ragazze sono in forma? Rischiano di farsi male?*
+    """)
+    
+    with st.expander("1. 📊 RPE e Carico Interno (sRPE): La voce dell'atleta"):
         st.markdown("""
-        **RPE (Rating of Perceived Exertion):** È un valore da 1 a 10 che l'atleta dà alla difficoltà dell'allenamento.
-        **sRPE (Session RPE):** RPE x minuti. Rappresenta il Carico Interno.
+        **RPE (Rating of Perceived Exertion - Scala 1-10)**
+        È il voto che l'atleta dà alla difficoltà dell'allenamento. Perché è fondamentale? Perché **non misura solo lo sforzo fisico, ma lo stress globale**. Una ragazza che ha dormito poco o ha forte stress scolastico percepirà un allenamento normale come "pesantissimo".
+        *   **1-3:** Molto leggero (Recupero, walk-through, sessioni di solo tiro)
+        *   **4-6:** Moderato (Lavoro tattico a metà campo, 5v0)
+        *   **7-8:** Duro (Lavoro ad alta intensità, 5v5, transizioni, difese pressanti)
+        *   **9-10:** Massimale (Partita punto a punto o lavoro metabolico estremo)
+        
+        **sRPE (Session RPE = RPE x Minuti)**
+        È il vero **Carico Interno**. Se fai un allenamento di 90 minuti valutato 6, il carico è 540. Questo numero dice allo staff esattamente *quanta benzina* è stata consumata in quella seduta.
+        
+       
+        
+    with st.expander("2. 📋 Carico Esterno: La pianificazione del Coach"):
+        st.markdown("""
+        Il **Carico Esterno** è quello che lo staff *decide* di fare a tavolino. In assenza di GPS o wearable, lo calcoliamo assegnando un'intensità arbitraria all'esercitazione.
+        
+        **Come assegnare il "Peso" (1-10) alle esercitazioni di Basket:**
+        *   **1-3:** Riscaldamento statico, stretching, tiri liberi, 5v0 a metà campo (camminato/jogging).
+        *   **4-6:** Esercizi di tecnica individuale, 3v3 a metà campo, situazioni tattiche 4v4 con difesa guidata.
+        *   **7-8:** 5v5 a tutto campo, transizioni continue, sovrannumeri ad alta intensità (es. 11-man drill).
+        *   **9-10:** Lavoro metabolico a secco (suicidi, navette) o situazioni di gioco massimali prolungate senza pause,1v1 a tutto campo etc..
+        
+        Moltiplicando questo Peso per i minuti dell'esercitazione, otteniamo le Unità Arbitrarie (AU) del carico esterno giornaliero.
         """)
+        
+    with st.expander("3. ⚖️ Matrice Efficienza: L'atleta sta assorbendo il lavoro?"):
+        st.markdown("""
+        L'incrocio tra **quello che hai pianificato tu (Esterno)** e **quello che ha sentito l'atleta (Interno)** ti dice tutto sul suo stato di forma attuale.
+        
+        *   🟢 **Ottimo Adattamento (Esterno ALTO / Interno BASSO):** Hai fatto un allenamento durissimo (es. peso 8), ma la giocatrice lo ha percepito facile (es. RPE 5). *Significato:* L'atleta vola, ha una fitness eccellente e assorbe bene i carichi.
+        *   🟡 **In Linea (Esterno = Interno):** L'allenamento era progettato da 7 e l'hanno sentito da 7. *Significato:* Normale amministrazione.
+        *   🔴 **Faticamento (Esterno BASSO / Interno ALTO):** Hai fatto scarico pre-partita (peso 3), ma l'atleta ti dà RPE 7. *Significato:* Campanello d'allarme! L'atleta è svuotata, ha accumulato fatica residua o sta covando un'influenza. Ha bisogno di riposo, farla spingere ora significa infortunio o crollo della prestazione in gara.
+        """)
+
+    with st.expander("4. 📈 ACWR (Gabbett) & EWMA: Prevenire gli infortuni"):
+        st.markdown("""
+        L'**Acute:Chronic Workload Ratio (ACWR)** è il gold standard mondiale per la prevenzione infortuni. Risponde a un grande principio dello sport moderno: *"Non è l'allenamento duro a rompere i giocatori, ma l'allenamento duro per cui non sono preparati"*.
+        
+        Mette in rapporto la fatica di breve periodo (**Acuto** - ultimi 7 gg) con la "corazza" fisica costruita nel lungo periodo (**Cronico** - ultimi 28 gg). Noi usiamo la formula **EWMA**, che è più precisa perché dà più importanza agli allenamenti di ieri rispetto a quelli di 3 settimane fa.
+        
+        **Come leggere il semaforo in Home Page:**
+        *   🔵 **< 0.8 (Sottoallenamento):** L'atleta si sta allenando troppo poco. Rischia di farsi male al primo picco di intensità (es. una partita con alto minutaggio) perché non ha "corazza" (Cronico basso).
+        *   🟢 **0.8 - 1.3 (Sweet Spot):** La zona d'oro. Il carico sale gradualmente. Massima fitness, minimo rischio infortuni.
+        *   🟡 **1.3 - 1.5 (Zona di Attenzione):** Il picco di carico sta salendo un po' troppo in fretta. Da monitorare (potrebbe essere fisiologico in pre-season o dopo un infortunio).
+        *   🔴 **> 1.5 (Danger Zone):** Il carico acuto ha superato di oltre il 50% la base cronica. **Il rischio di infortuni muscolari e articolari raddoppia.** Bisogna far riposare l'atleta o ridurre drasticamente i suoi minuti nel prossimo allenamento.
+        """)
+        
+  
