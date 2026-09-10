@@ -33,7 +33,7 @@ ROSTER = sorted([
     "Magni Emilia", "Connelli Grace", "Bianchi Emma", "Alfieri Fiamma",
     "Sacca Federica", "Fiani Carlotta", "Porcelli Paola", "Pozzi Rebecca",
     "Raimondi Vittoria", "Trerotola Asia", "Villani Alice", "Sala Emma",
-    "Zanotti Anna", "Barchiellini Cecilia"
+    "Zanotti Anna", "Barchiellini Cecilia", "Cuomo Lara", "Turconi Margherita"
 ])
 
 # --- FUNZIONI GOOGLE SHEETS & LOCALI ---
