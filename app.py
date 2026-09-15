@@ -1,4 +1,3 @@
-   
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -113,10 +112,19 @@ def save_calendar_data(data, url):
             
     with open(CALENDAR_FILE, 'w') as f: json.dump(data, f, indent=4)
 
-# FIX: ROBUSTEZZA CARICO ESTERNO (Evita crash da date sporche o assenti inserite dall'agente)
+# FIX: ROBUSTEZZA TOTALE CARICO ESTERNO (Date Parser Infallibile)
 def load_ext_load(url):
     client = get_gclient()
     sheet_id = get_sheet_id(url)
+    
+    # Sotto-funzione per blindare il formato delle date in ingresso (ignora i dispetti di Google Sheets)
+    def parse_dates_safely(date_series):
+        s = date_series.astype(str).str.strip()
+        d1 = pd.to_datetime(s, format='%Y-%m-%d', errors='coerce')
+        d2 = pd.to_datetime(s, dayfirst=True, errors='coerce')
+        d3 = pd.to_datetime(s, errors='coerce')
+        return d1.fillna(d2).fillna(d3).dt.normalize()
+
     if client and sheet_id:
         try:
             sh = client.open_by_key(sheet_id)
@@ -124,9 +132,13 @@ def load_ext_load(url):
             records = ws.get_all_records()
             if records:
                 df = pd.DataFrame(records)
+                # Forza nomi puliti sulle colonne
+                df.columns = df.columns.astype(str).str.strip()
+                
                 if 'Data' in df.columns:
-                    df['Data'] = pd.to_datetime(df['Data'].astype(str).str.strip(), errors='coerce', dayfirst=True).dt.normalize()
+                    df['Data'] = parse_dates_safely(df['Data'])
                     df = df.dropna(subset=['Data'])
+                    
                     df['Peso'] = pd.to_numeric(df['Peso'], errors='coerce').fillna(0)
                     df['Minuti'] = pd.to_numeric(df['Minuti'], errors='coerce').fillna(0)
                     df['Carico_Esterno'] = pd.to_numeric(df['Carico_Esterno'], errors='coerce').fillna(0)
@@ -139,19 +151,22 @@ def load_ext_load(url):
     if os.path.exists(EXT_LOAD_FILE):
         try:
             df = pd.read_csv(EXT_LOAD_FILE)
+            df.columns = df.columns.astype(str).str.strip()
             if 'Data' in df.columns:
-                df['Data'] = pd.to_datetime(df['Data'].astype(str).str.strip(), errors='coerce', dayfirst=True).dt.normalize()
+                df['Data'] = parse_dates_safely(df['Data'])
                 df = df.dropna(subset=['Data'])
                 return df
         except Exception:
             pass
+            
     return pd.DataFrame(columns=['Data', 'Esercitazione', 'Peso', 'Minuti', 'Carico_Esterno'])
 
-# FIX: SALVATAGGIO SICURO (Niente date corrotte o valori nulli matematici)
 def save_ext_load(df, url):
     client = get_gclient()
     sheet_id = get_sheet_id(url)
     df_out = df.copy()
+    
+    df_out.columns = df_out.columns.astype(str).str.strip()
     
     df_out['Data'] = pd.to_datetime(df_out['Data'], errors='coerce').dt.normalize()
     df_out = df_out.dropna(subset=['Data']) 
@@ -256,13 +271,11 @@ def process_daily_data(df_base, cal_data, default_duration=90):
             day_info = cal_data.get(d_str, {})
             
             # Recupera le info del giorno per il gruppo primario dell'atleta
-            # Se è in entrambi i gruppi, diamo priorità all'evento più gravoso (es. Partita vince su Allenamento)
             gruppi_info = []
             if is_u19 and "U19" in day_info: gruppi_info.append(day_info["U19"])
             if is_u17 and "U17" in day_info: gruppi_info.append(day_info["U17"])
             if "Global" in day_info: gruppi_info.append(day_info["Global"]) # Retrocompatibilità
             
-            # Se non ci sono info specifiche, usa un default globale o il dizionario base (se vecchio formato)
             if not gruppi_info:
                 if 'type' in day_info:  # Vecchio formato
                     g_info = day_info
@@ -415,11 +428,10 @@ if page == "🏠 Home Squadra":
             elif group_filter == "Solo U17":
                 if day_info.get("U17", {}).get("type") == "Partita": return GEAS_RED
             else:
-                # Se vista globale, diventa rosso se QUALSIASI dei due gruppi aveva partita (o evento globale)
                 if day_info.get("U19", {}).get("type") == "Partita" or \
                    day_info.get("U17", {}).get("type") == "Partita" or \
                    day_info.get("Global", {}).get("type") == "Partita" or \
-                   day_info.get("type") == "Partita": # retrocompatibilità
+                   day_info.get("type") == "Partita": 
                     return GEAS_RED
             return GEAS_GOLD
         
@@ -461,7 +473,7 @@ if page == "🏠 Home Squadra":
             for tipo in df_a_home['Tipo']:
                 if 'Riposo' in tipo: colors_h.append('gray')
                 elif 'Partita' in tipo: colors_h.append(GEAS_RED)
-                elif 'Assente' in tipo: colors_h.append('red') # Bordo o opacità diversa potrebbe essere meglio
+                elif 'Assente' in tipo: colors_h.append('red') 
                 else: colors_h.append('#3498db')
                 
             fig_a.add_trace(go.Bar(
@@ -496,7 +508,11 @@ elif page == "📈 Gestione Carico Esterno":
             if st.form_submit_button("Salva nel Registro"):
                 nuovo_carico = e_peso * e_min
                 nuova_riga = pd.DataFrame([{'Data': pd.to_datetime(e_data), 'Esercitazione': e_nome, 'Peso': e_peso, 'Minuti': e_min, 'Carico_Esterno': nuovo_carico}])
+                # Se il df originale era vuoto, assicuriamoci di allineare le colonne
+                if df_ext.empty:
+                    df_ext = pd.DataFrame(columns=['Data', 'Esercitazione', 'Peso', 'Minuti', 'Carico_Esterno'])
                 df_ext = pd.concat([df_ext, nuova_riga], ignore_index=True)
+                
                 save_ext_load(df_ext, url_google)
                 st.success("Esercitazione salvata!")
                 st.rerun()
@@ -528,7 +544,7 @@ elif page == "📈 Gestione Carico Esterno":
             df_storico = df_ext.sort_values('Data', ascending=False).copy()
             df_storico = df_storico.dropna(subset=['Data']) 
             
-            # FIX DATA: Usiamo date() puro per rimuovere le ore e renderlo leggibile in Streamlit Data Editor
+            # Formattiamo per permettere modifiche chiare
             df_storico['Data'] = df_storico['Data'].dt.date
             
             edited_df = st.data_editor(
@@ -537,7 +553,7 @@ elif page == "📈 Gestione Carico Esterno":
             )
             
             if not edited_df.equals(df_storico):
-                # Riconversione sicura post-modifica
+                # Riconversione post-modifica
                 edited_df['Data'] = pd.to_datetime(edited_df['Data'], errors='coerce').dt.normalize()
                 edited_df = edited_df.dropna(subset=['Data'])
                 edited_df['Peso'] = pd.to_numeric(edited_df['Peso'], errors='coerce').fillna(0)
@@ -606,7 +622,7 @@ elif page == "📊 Compliance % (Assenze)":
         for d in pd.date_range(start=df_base['Data'].min(), end=oggi):
             d_str = d.strftime('%Y-%m-%d')
             info = calendar_data.get(d_str, {})
-            # Approssimazione globale per la compliance: se almeno uno dei gruppi ha lavorato, lo consideriamo giorno lavorativo generale
+            # Approssimazione globale per la compliance
             rest_global = info.get('Global', info).get('rest', False)
             if not rest_global: giorni_lavoro.append(d)
                 
@@ -649,7 +665,7 @@ elif page == "📅 Calendario & Partite":
         
         target_group = st.selectbox("Imposta programma per:", ["U19", "U17"])
         
-        # Retrocompatibilità (se il json è nel vecchio formato, lo wrappa nel nuovo)
+        # Retrocompatibilità
         if "type" in calendar_data[data_str]:
             old_data = calendar_data[data_str].copy()
             calendar_data[data_str] = {"U19": old_data, "U17": old_data}
@@ -768,4 +784,4 @@ elif page == "📚 Formazione & Spiegazioni":
         *   🟢 **0.8 - 1.3 (Sweet Spot):** Condizione di equilibrio. Il carico attuale è ben proporzionato rispetto alla base storica.
         *   🟡 **1.3 - 1.5 (Zona di Attenzione):** Il carico acuto sta crescendo rapidamente rispetto alla media dell'ultimo mese.
         *   🔴 **> 1.5 (Danger Zone):** Il picco di lavoro recente supera di oltre il 50% la base cronica dell'atleta. La letteratura sportiva indica che un innalzamento così brusco rispetto alle abitudini espone statisticamente a un maggior rischio di sovraccarico.
-        """)
+        """)   
