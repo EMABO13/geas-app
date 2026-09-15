@@ -1,3 +1,4 @@
+   
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -262,7 +263,7 @@ def process_daily_data(df_base, cal_data, default_duration=90):
             if "Global" in day_info: gruppi_info.append(day_info["Global"]) # Retrocompatibilità
             
             # Se non ci sono info specifiche, usa un default globale o il dizionario base (se vecchio formato)
-            if non gruppi_info:
+            if not gruppi_info:
                 if 'type' in day_info:  # Vecchio formato
                     g_info = day_info
                 else:
