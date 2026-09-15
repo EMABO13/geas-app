@@ -41,10 +41,8 @@ ROSTER_U17 = [
     "Sala Emma", "Zanotti Anna", "Barchiellini Cecilia"
 ]
 
-# Altre atlete presenti nel DB (es. U15 aggregate)
 ALTRE_ATLETE = ["Cuomo Lara", "Turconi Margherita"]
 
-# Roster Unico (senza duplicati, ordinato alfabeticamente)
 ROSTER = sorted(list(set(ROSTER_U19 + ROSTER_U17 + ALTRE_ATLETE)))
 
 # --- FUNZIONI GOOGLE SHEETS & LOCALI ---
@@ -112,12 +110,10 @@ def save_calendar_data(data, url):
             
     with open(CALENDAR_FILE, 'w') as f: json.dump(data, f, indent=4)
 
-# FIX: ROBUSTEZZA TOTALE CARICO ESTERNO (Date Parser Infallibile)
 def load_ext_load(url):
     client = get_gclient()
     sheet_id = get_sheet_id(url)
     
-    # Sotto-funzione per blindare il formato delle date in ingresso (ignora i dispetti di Google Sheets)
     def parse_dates_safely(date_series):
         s = date_series.astype(str).str.strip()
         d1 = pd.to_datetime(s, format='%Y-%m-%d', errors='coerce')
@@ -132,7 +128,6 @@ def load_ext_load(url):
             records = ws.get_all_records()
             if records:
                 df = pd.DataFrame(records)
-                # Forza nomi puliti sulle colonne
                 df.columns = df.columns.astype(str).str.strip()
                 
                 if 'Data' in df.columns:
@@ -192,7 +187,6 @@ def save_ext_load(df, url):
 
     df_out.to_csv(EXT_LOAD_FILE, index=False)
 
-# --- FUNZIONI CALCOLI ---
 def calc_ewma(series, span):
     return series.ewm(span=span, adjust=False).mean()
 
@@ -248,7 +242,6 @@ def process_data(df_raw, col_data, col_atleta, col_rpe):
     
     return df
 
-# AGGIORNAMENTO: Supporto logica a gruppi U19/U17
 def process_daily_data(df_base, cal_data, default_duration=90):
     if df_base.empty: return pd.DataFrame()
     
@@ -262,7 +255,6 @@ def process_daily_data(df_base, cal_data, default_duration=90):
     for atleta in ROSTER:
         atleta_data = df_base[df_base['Atleta'] == atleta].copy()
         
-        # Determina a quali gruppi appartiene l'atleta
         is_u19 = atleta in ROSTER_U19
         is_u17 = atleta in ROSTER_U17
         
@@ -270,19 +262,17 @@ def process_daily_data(df_base, cal_data, default_duration=90):
             d_str = d.strftime('%Y-%m-%d')
             day_info = cal_data.get(d_str, {})
             
-            # Recupera le info del giorno per il gruppo primario dell'atleta
             gruppi_info = []
             if is_u19 and "U19" in day_info: gruppi_info.append(day_info["U19"])
             if is_u17 and "U17" in day_info: gruppi_info.append(day_info["U17"])
-            if "Global" in day_info: gruppi_info.append(day_info["Global"]) # Retrocompatibilità
+            if "Global" in day_info: gruppi_info.append(day_info["Global"]) 
             
             if not gruppi_info:
-                if 'type' in day_info:  # Vecchio formato
+                if 'type' in day_info: 
                     g_info = day_info
                 else:
                     g_info = {'type': 'Allenamento', 'duration': default_duration, 'rest': False}
             else:
-                # Logica priorità: Partita > Allenamento > Riposo
                 has_match = any(g.get('type') == 'Partita' for g in gruppi_info)
                 has_train = any(g.get('type') == 'Allenamento' for g in gruppi_info)
                 
@@ -310,7 +300,6 @@ def process_daily_data(df_base, cal_data, default_duration=90):
     df_full = pd.DataFrame(new_rows)
     df_full['sRPE'] = df_full['RPE'] * df_full['Durata']
     
-    # Assegna il gruppo per i filtri dashboard
     def assign_primary_group(name):
         if name in ROSTER_U19 and name in ROSTER_U17: return "Doppio Roster (U19/U17)"
         elif name in ROSTER_U19: return "U19"
@@ -384,7 +373,6 @@ if page == "🏠 Home Squadra":
     st.title("Panoramica Globale U19/U17")
     
     if not df_full.empty:
-        # Filtro Gruppo
         filter_group = st.radio("Filtra Vista per Gruppo:", ["Tutta la Squadra", "Solo U19", "Solo U17"], horizontal=True)
         
         if filter_group == "Solo U19":
@@ -417,12 +405,10 @@ if page == "🏠 Home Squadra":
         tf = st.radio("Seleziona Vista Temporale:", ["Ultimi 7 Giorni", "Ultimi 30 Giorni", "Tutto lo storico"], horizontal=True)
         oggi = pd.to_datetime('today').normalize()
         
-        # AGGIUNTA: Determiniamo il colore della barra (Rosso se è stata una partita per questo gruppo)
         def get_bar_color(date, group_filter):
             date_str = date.strftime('%Y-%m-%d')
             day_info = calendar_data.get(date_str, {})
             
-            # Verifica se ci sono state partite in base al filtro
             if group_filter == "Solo U19":
                 if day_info.get("U19", {}).get("type") == "Partita": return GEAS_RED
             elif group_filter == "Solo U17":
@@ -508,7 +494,6 @@ elif page == "📈 Gestione Carico Esterno":
             if st.form_submit_button("Salva nel Registro"):
                 nuovo_carico = e_peso * e_min
                 nuova_riga = pd.DataFrame([{'Data': pd.to_datetime(e_data), 'Esercitazione': e_nome, 'Peso': e_peso, 'Minuti': e_min, 'Carico_Esterno': nuovo_carico}])
-                # Se il df originale era vuoto, assicuriamoci di allineare le colonne
                 if df_ext.empty:
                     df_ext = pd.DataFrame(columns=['Data', 'Esercitazione', 'Peso', 'Minuti', 'Carico_Esterno'])
                 df_ext = pd.concat([df_ext, nuova_riga], ignore_index=True)
@@ -521,30 +506,44 @@ elif page == "📈 Gestione Carico Esterno":
         st.subheader("Andamento Carico Esterno Totale")
         if not df_ext.empty:
             view = st.radio("Vista Grafico:", ["Giornaliero", "Settimanale"], horizontal=True)
-            df_g = df_ext.groupby('Data')['Carico_Esterno'].sum().reset_index()
             
-            if view == "Settimanale":
-                df_g['Settimana'] = df_g['Data'].dt.isocalendar().week
-                df_g = df_g.groupby('Settimana')['Carico_Esterno'].sum().reset_index()
-                fig = go.Figure(go.Bar(x=df_g['Settimana'].astype(str), y=df_g['Carico_Esterno'], marker_color=GEAS_RED))
-                fig.update_layout(template="plotly_white", xaxis_title="Numero Settimana dell'anno")
-            else:
+            # Prepariamo un dataframe di base ignorando valori invalidi
+            df_g_base = df_ext.dropna(subset=['Data']).copy()
+            
+            if view == "Giornaliero":
+                # Creiamo l'asse temporale continuo, riempiendo i giorni vuoti con 0
+                min_date = df_g_base['Data'].min()
+                max_date = pd.to_datetime('today').normalize()
+                if pd.isna(min_date):
+                    min_date = max_date - timedelta(days=7)
+                
+                all_days = pd.date_range(start=min_date, end=max_date, freq='D')
+                
+                df_g = df_g_base.groupby('Data')['Carico_Esterno'].sum().reindex(all_days, fill_value=0).reset_index()
+                df_g.columns = ['Data', 'Carico_Esterno']
+                df_g = df_g.sort_values('Data', ascending=True) # Ordine rigorosamente crescente
+                
                 fig = go.Figure(go.Bar(x=df_g['Data'].dt.strftime('%d/%m/%Y'), y=df_g['Carico_Esterno'], marker_color=GEAS_RED))
                 fig.update_layout(template="plotly_white", xaxis_title="Data")
+            else:
+                df_g_base['Settimana'] = df_g_base['Data'].dt.isocalendar().week
+                df_g = df_g_base.groupby('Settimana')['Carico_Esterno'].sum().reset_index()
+                df_g = df_g.sort_values('Settimana', ascending=True)
+                fig = go.Figure(go.Bar(x=df_g['Settimana'].astype(str), y=df_g['Carico_Esterno'], marker_color=GEAS_RED))
+                fig.update_layout(template="plotly_white", xaxis_title="Numero Settimana dell'anno")
                 
             st.plotly_chart(fig, use_container_width=True)
             
     st.markdown("---")
     st.header("📝 Diario Esercitazioni e Modifica")
     
-    if not df_ext.empty:
-        col_ed1, col_ed2 = st.columns(2)
-        with col_ed1:
-            st.subheader("Modifica / Elimina Record")
+    col_ed1, col_ed2 = st.columns(2)
+    with col_ed1:
+        st.subheader("Modifica / Elimina Record")
+        if not df_ext.empty:
             df_storico = df_ext.sort_values('Data', ascending=False).copy()
             df_storico = df_storico.dropna(subset=['Data']) 
             
-            # Formattiamo per permettere modifiche chiare
             df_storico['Data'] = df_storico['Data'].dt.date
             
             edited_df = st.data_editor(
@@ -553,7 +552,6 @@ elif page == "📈 Gestione Carico Esterno":
             )
             
             if not edited_df.equals(df_storico):
-                # Riconversione post-modifica
                 edited_df['Data'] = pd.to_datetime(edited_df['Data'], errors='coerce').dt.normalize()
                 edited_df = edited_df.dropna(subset=['Data'])
                 edited_df['Peso'] = pd.to_numeric(edited_df['Peso'], errors='coerce').fillna(0)
@@ -563,19 +561,29 @@ elif page == "📈 Gestione Carico Esterno":
                 save_ext_load(edited_df, url_google)
                 st.success("Modifiche salvate con successo!")
                 st.rerun()
+        else:
+            st.info("Nessuna esercitazione presente da modificare.")
 
-        with col_ed2:
-            st.subheader("Tracciamento Allenamenti (Diario Coach)")
-            df_storico_disp = df_storico.dropna(subset=['Data']).copy()
-            giorni = df_storico_disp['Data'].unique()
-            for g in giorni[:10]:
-                if pd.isna(g): continue
-                dati_giorno = df_storico_disp[df_storico_disp['Data'] == g]
-                data_str = g.strftime('%d/%m/%Y')
+    with col_ed2:
+        st.subheader("Tracciamento Allenamenti (Diario Coach)")
+        # Creiamo una lista degli ultimi 14 giorni esatti, senza buchi
+        oggi = pd.to_datetime('today').normalize()
+        giorni_calendario = pd.date_range(end=oggi, periods=14, freq='D')[::-1] # Ordine decrescente (più recente in alto)
+        
+        df_storico_disp = df_ext.dropna(subset=['Data']).copy() if not df_ext.empty else pd.DataFrame(columns=['Data'])
+        
+        for g in giorni_calendario:
+            dati_giorno = df_storico_disp[df_storico_disp['Data'] == g] if not df_storico_disp.empty else pd.DataFrame()
+            data_str = g.strftime('%d/%m/%Y')
+            
+            if not dati_giorno.empty:
                 carico_tot = dati_giorno['Carico_Esterno'].sum()
-                with st.expander(f"🏀 Allenamento del {data_str} (Carico Tot: {carico_tot})"):
+                with st.expander(f"🏀 {data_str} - Carico Totale: {carico_tot}", expanded=False):
                     for _, row in dati_giorno.iterrows():
-                        st.markdown(f"- **{row['Esercitazione']}** | Intensità: {row['Peso']}/10 | Durata: {row['Minuti']}'")
+                        st.markdown(f"- **{row.get('Esercitazione', 'N/D')}** | Intensità: {row.get('Peso', 0)}/10 | Durata: {row.get('Minuti', 0)}'")
+            else:
+                with st.expander(f"⏸️ {data_str} - Nessun carico registrato", expanded=False):
+                    st.write("Nessuna esercitazione inserita per questa giornata.")
 
 elif page == "👤 Rapporto Interno/Esterno (Atleta)":
     st.title("Stato di Forma: Interno vs Esterno")
@@ -622,7 +630,6 @@ elif page == "📊 Compliance % (Assenze)":
         for d in pd.date_range(start=df_base['Data'].min(), end=oggi):
             d_str = d.strftime('%Y-%m-%d')
             info = calendar_data.get(d_str, {})
-            # Approssimazione globale per la compliance
             rest_global = info.get('Global', info).get('rest', False)
             if not rest_global: giorni_lavoro.append(d)
                 
@@ -656,7 +663,6 @@ elif page == "📅 Calendario & Partite":
         data_sel = st.date_input("Seleziona Data", datetime.today())
         data_str = data_sel.strftime('%Y-%m-%d')
         
-        # Recupera o inizializza i dati del giorno
         if data_str not in calendar_data:
             calendar_data[data_str] = {
                 "U19": {'type': 'Allenamento', 'duration': durata_globale, 'rest': False},
@@ -665,7 +671,6 @@ elif page == "📅 Calendario & Partite":
         
         target_group = st.selectbox("Imposta programma per:", ["U19", "U17"])
         
-        # Retrocompatibilità
         if "type" in calendar_data[data_str]:
             old_data = calendar_data[data_str].copy()
             calendar_data[data_str] = {"U19": old_data, "U17": old_data}
@@ -697,7 +702,6 @@ elif page == "📅 Calendario & Partite":
             st.info(f"Imposta il minutaggio esatto atlete {target_group} (Default: 40')")
             player_mins = dati_target.get('player_minutes', {})
             
-            # Mostra solo il roster del gruppo selezionato
             roster_da_mostrare = ROSTER_U19 if target_group == "U19" else ROSTER_U17
             
             with st.form("minutaggi_partita"):
@@ -713,10 +717,9 @@ elif page == "📅 Calendario & Partite":
     with col2:
         st.subheader("Registro Configurazioni")
         if calendar_data:
-            # Creiamo un dataframe di visualizzazione semplificato
             disp_data = []
             for d, v in calendar_data.items():
-                if "type" in v: # vecchio formato
+                if "type" in v:
                     disp_data.append({'Data': d, 'Gruppo': 'Global', 'Tipo': v.get('type')})
                 else:
                     if "U19" in v: disp_data.append({'Data': d, 'Gruppo': 'U19', 'Tipo': v['U19'].get('type')})
@@ -784,4 +787,4 @@ elif page == "📚 Formazione & Spiegazioni":
         *   🟢 **0.8 - 1.3 (Sweet Spot):** Condizione di equilibrio. Il carico attuale è ben proporzionato rispetto alla base storica.
         *   🟡 **1.3 - 1.5 (Zona di Attenzione):** Il carico acuto sta crescendo rapidamente rispetto alla media dell'ultimo mese.
         *   🔴 **> 1.5 (Danger Zone):** Il picco di lavoro recente supera di oltre il 50% la base cronica dell'atleta. La letteratura sportiva indica che un innalzamento così brusco rispetto alle abitudini espone statisticamente a un maggior rischio di sovraccarico.
-        """)   
+        """)
