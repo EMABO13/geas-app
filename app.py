@@ -78,7 +78,7 @@ def load_calendar_data(url):
             return cal_data
         except gspread.WorksheetNotFound:
             pass 
-        except Exception as e:
+        except Exception:
             pass 
 
     if os.path.exists(CALENDAR_FILE):
@@ -110,7 +110,6 @@ def save_calendar_data(data, url):
             
     with open(CALENDAR_FILE, 'w') as f: json.dump(data, f, indent=4)
 
-# RIPRISTINO VECCHIO SISTEMA LETTURA DATE PER MANTENERE COMPATIBILITA'
 def load_ext_load(url):
     client = get_gclient()
     sheet_id = get_sheet_id(url)
@@ -123,9 +122,13 @@ def load_ext_load(url):
             if records:
                 df = pd.DataFrame(records)
                 if 'Data' in df.columns:
-                    # Ritorno all'esatto metodo originale
-                    df['Data'] = pd.to_datetime(df['Data'], errors='coerce', dayfirst=True).dt.normalize()
+                    # Ritorno alla lettura pura originale
+                    df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.normalize()
                     df = df.dropna(subset=['Data'])
+                    
+                    df['Peso'] = pd.to_numeric(df['Peso'], errors='coerce').fillna(0)
+                    df['Minuti'] = pd.to_numeric(df['Minuti'], errors='coerce').fillna(0)
+                    df['Carico_Esterno'] = pd.to_numeric(df['Carico_Esterno'], errors='coerce').fillna(0)
                     return df
         except gspread.WorksheetNotFound:
             pass
@@ -136,7 +139,7 @@ def load_ext_load(url):
         try:
             df = pd.read_csv(EXT_LOAD_FILE)
             if 'Data' in df.columns:
-                df['Data'] = pd.to_datetime(df['Data'], errors='coerce', dayfirst=True).dt.normalize()
+                df['Data'] = pd.to_datetime(df['Data'], errors='coerce').dt.normalize()
                 df = df.dropna(subset=['Data'])
                 return df
         except Exception:
@@ -144,13 +147,15 @@ def load_ext_load(url):
             
     return pd.DataFrame(columns=['Data', 'Esercitazione', 'Peso', 'Minuti', 'Carico_Esterno'])
 
-# RIPRISTINO VECCHIO SISTEMA SALVATAGGIO CON FIX PER CELLE VUOTE
 def save_ext_load(df, url):
     client = get_gclient()
     sheet_id = get_sheet_id(url)
     df_out = df.copy()
     
+    df_out['Data'] = pd.to_datetime(df_out['Data'], errors='coerce').dt.normalize()
     df_out = df_out.dropna(subset=['Data']) 
+    df_out['Data'] = df_out['Data'].dt.strftime('%Y-%m-%d')
+    df_out = df_out.fillna('')
     
     if client and sheet_id:
         try:
@@ -159,11 +164,6 @@ def save_ext_load(df, url):
                 ws = sh.worksheet("Carico_Esterno")
             except gspread.WorksheetNotFound:
                 ws = sh.add_worksheet(title="Carico_Esterno", rows="1000", cols="5")
-            
-            # Formattazione originale YYYY-MM-DD
-            df_out['Data'] = df_out['Data'].dt.strftime('%Y-%m-%d')
-            # Previene crash su valori non numerici (celle vuote)
-            df_out = df_out.fillna('')
             
             rows = [df_out.columns.values.tolist()] + df_out.values.tolist()
             ws.clear()
@@ -197,6 +197,7 @@ def process_data(df_raw, col_data, col_atleta, col_rpe):
     df.columns = ['Data', 'Atleta', 'RPE']
     df = df.dropna(how='all')
     
+    # I dati di Google Form arrivano come timestamp italiano "GG/MM/YYYY HH:MM:SS"
     def pulisci_data(x):
         try:
             s = str(x).strip()
@@ -317,7 +318,7 @@ def calcola_metriche(df_atleta):
 
 # --- UI APP ---
 if os.path.exists(IMG_PATH): st.sidebar.image(IMG_PATH, use_container_width=True)
-st.sidebar.markdown(f"📅 **Oggi:** {datetime.today().strftime('%d/%m/%Y')}")
+st.sidebar.markdown(f"📅 **Oggi:** {datetime.today().strftime('%Y-%m-%d')}")
 
 if GSPREAD_AVAILABLE and "gcp_service_account" in st.secrets:
     st.sidebar.success("☁️ Sincronizzazione Cloud Attiva")
@@ -498,7 +499,6 @@ elif page == "📈 Gestione Carico Esterno":
             df_g_base = df_ext.dropna(subset=['Data']).copy()
             
             if view == "Giornaliero":
-                # Grafico in ordine rigoroso considerando date da inizio a fine
                 min_date = df_g_base['Data'].min()
                 max_date = df_g_base['Data'].max()
                 
@@ -512,7 +512,8 @@ elif page == "📈 Gestione Carico Esterno":
                 df_g.columns = ['Data', 'Carico_Esterno']
                 df_g = df_g.sort_values('Data', ascending=True)
                 
-                fig = go.Figure(go.Bar(x=df_g['Data'].dt.strftime('%d/%m/%Y'), y=df_g['Carico_Esterno'], marker_color=GEAS_RED))
+                # Ripristinato a YYYY-MM-DD per coerenza
+                fig = go.Figure(go.Bar(x=df_g['Data'].dt.strftime('%Y-%m-%d'), y=df_g['Carico_Esterno'], marker_color=GEAS_RED))
                 fig.update_layout(template="plotly_white", xaxis_title="Data")
             else:
                 df_g_base['Settimana'] = df_g_base['Data'].dt.isocalendar().week
@@ -533,10 +534,12 @@ elif page == "📈 Gestione Carico Esterno":
             df_storico = df_ext.sort_values('Data', ascending=False).copy()
             df_storico = df_storico.dropna(subset=['Data']) 
             
-            # Utilizza DatetimeColumn originale per formattare senza toccare l'oggetto python base
+            df_storico['Data'] = df_storico['Data'].dt.date
+            
+            # Formato DateColumn impostato esplicitamente su YYYY-MM-DD
             edited_df = st.data_editor(
                 df_storico, num_rows="dynamic", use_container_width=True, hide_index=True,
-                column_config={"Data": st.column_config.DatetimeColumn("Data", format="DD/MM/YYYY")}
+                column_config={"Data": st.column_config.DateColumn("Data", format="YYYY-MM-DD")}
             )
             
             if not edited_df.equals(df_storico):
@@ -557,8 +560,6 @@ elif page == "📈 Gestione Carico Esterno":
         
         df_storico_disp = df_ext.dropna(subset=['Data']).copy() if not df_ext.empty else pd.DataFrame(columns=['Data'])
         
-        # Calendario dinamico: va dalla data MASSIMA esistente a ritroso (massimo 30 giorni) 
-        # Cosi include sempre anche le date vecchie lette erroneamente nel futuro!
         if not df_storico_disp.empty:
             max_d = df_storico_disp['Data'].max()
             min_d = df_storico_disp['Data'].min()
@@ -570,7 +571,8 @@ elif page == "📈 Gestione Carico Esterno":
             
         for g in giorni_calendario:
             dati_giorno = df_storico_disp[df_storico_disp['Data'] == g] if not df_storico_disp.empty else pd.DataFrame()
-            data_str = g.strftime('%d/%m/%Y')
+            # Formato Americano per il calendario
+            data_str = g.strftime('%Y-%m-%d')
             
             if not dati_giorno.empty:
                 carico_tot = dati_giorno['Carico_Esterno'].sum()
@@ -725,7 +727,8 @@ elif page == "📅 Calendario & Partite":
                 df_cal = pd.DataFrame(disp_data)
                 df_cal['Data'] = pd.to_datetime(df_cal['Data'])
                 df_cal = df_cal.sort_values('Data', ascending=False)
-                st.dataframe(df_cal.style.format({"Data": lambda t: t.strftime("%d/%m/%Y")}), use_container_width=True)
+                # Formato YYYY-MM-DD anche qui per coerenza
+                st.dataframe(df_cal.style.format({"Data": lambda t: t.strftime("%Y-%m-%d")}), use_container_width=True)
                 
             if st.button("Resetta tutto il calendario"):
                 save_calendar_data({}, url_google)
