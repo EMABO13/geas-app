@@ -110,17 +110,11 @@ def save_calendar_data(data, url):
             
     with open(CALENDAR_FILE, 'w') as f: json.dump(data, f, indent=4)
 
+# RIPRISTINO VECCHIO SISTEMA LETTURA DATE PER MANTENERE COMPATIBILITA'
 def load_ext_load(url):
     client = get_gclient()
     sheet_id = get_sheet_id(url)
     
-    def parse_dates_safely(date_series):
-        s = date_series.astype(str).str.strip()
-        d1 = pd.to_datetime(s, format='%Y-%m-%d', errors='coerce')
-        d2 = pd.to_datetime(s, dayfirst=True, errors='coerce')
-        d3 = pd.to_datetime(s, errors='coerce')
-        return d1.fillna(d2).fillna(d3).dt.normalize()
-
     if client and sheet_id:
         try:
             sh = client.open_by_key(sheet_id)
@@ -128,27 +122,21 @@ def load_ext_load(url):
             records = ws.get_all_records()
             if records:
                 df = pd.DataFrame(records)
-                df.columns = df.columns.astype(str).str.strip()
-                
                 if 'Data' in df.columns:
-                    df['Data'] = parse_dates_safely(df['Data'])
+                    # Ritorno all'esatto metodo originale
+                    df['Data'] = pd.to_datetime(df['Data'], errors='coerce', dayfirst=True).dt.normalize()
                     df = df.dropna(subset=['Data'])
-                    
-                    df['Peso'] = pd.to_numeric(df['Peso'], errors='coerce').fillna(0)
-                    df['Minuti'] = pd.to_numeric(df['Minuti'], errors='coerce').fillna(0)
-                    df['Carico_Esterno'] = pd.to_numeric(df['Carico_Esterno'], errors='coerce').fillna(0)
                     return df
         except gspread.WorksheetNotFound:
             pass
-        except Exception as e:
-            st.warning(f"Errore caricamento Carico Esterno: {e}")
+        except Exception:
+            pass
 
     if os.path.exists(EXT_LOAD_FILE):
         try:
             df = pd.read_csv(EXT_LOAD_FILE)
-            df.columns = df.columns.astype(str).str.strip()
             if 'Data' in df.columns:
-                df['Data'] = parse_dates_safely(df['Data'])
+                df['Data'] = pd.to_datetime(df['Data'], errors='coerce', dayfirst=True).dt.normalize()
                 df = df.dropna(subset=['Data'])
                 return df
         except Exception:
@@ -156,17 +144,13 @@ def load_ext_load(url):
             
     return pd.DataFrame(columns=['Data', 'Esercitazione', 'Peso', 'Minuti', 'Carico_Esterno'])
 
+# RIPRISTINO VECCHIO SISTEMA SALVATAGGIO CON FIX PER CELLE VUOTE
 def save_ext_load(df, url):
     client = get_gclient()
     sheet_id = get_sheet_id(url)
     df_out = df.copy()
     
-    df_out.columns = df_out.columns.astype(str).str.strip()
-    
-    df_out['Data'] = pd.to_datetime(df_out['Data'], errors='coerce').dt.normalize()
     df_out = df_out.dropna(subset=['Data']) 
-    df_out['Data'] = df_out['Data'].dt.strftime('%Y-%m-%d')
-    df_out = df_out.fillna('')
     
     if client and sheet_id:
         try:
@@ -175,6 +159,11 @@ def save_ext_load(df, url):
                 ws = sh.worksheet("Carico_Esterno")
             except gspread.WorksheetNotFound:
                 ws = sh.add_worksheet(title="Carico_Esterno", rows="1000", cols="5")
+            
+            # Formattazione originale YYYY-MM-DD
+            df_out['Data'] = df_out['Data'].dt.strftime('%Y-%m-%d')
+            # Previene crash su valori non numerici (celle vuote)
+            df_out = df_out.fillna('')
             
             rows = [df_out.columns.values.tolist()] + df_out.values.tolist()
             ws.clear()
@@ -506,22 +495,22 @@ elif page == "📈 Gestione Carico Esterno":
         st.subheader("Andamento Carico Esterno Totale")
         if not df_ext.empty:
             view = st.radio("Vista Grafico:", ["Giornaliero", "Settimanale"], horizontal=True)
-            
-            # Prepariamo un dataframe di base ignorando valori invalidi
             df_g_base = df_ext.dropna(subset=['Data']).copy()
             
             if view == "Giornaliero":
-                # Creiamo l'asse temporale continuo, riempiendo i giorni vuoti con 0
+                # Grafico in ordine rigoroso considerando date da inizio a fine
                 min_date = df_g_base['Data'].min()
-                max_date = pd.to_datetime('today').normalize()
+                max_date = df_g_base['Data'].max()
+                
                 if pd.isna(min_date):
-                    min_date = max_date - timedelta(days=7)
+                    min_date = pd.to_datetime('today').normalize() - timedelta(days=7)
+                    max_date = pd.to_datetime('today').normalize()
                 
                 all_days = pd.date_range(start=min_date, end=max_date, freq='D')
                 
                 df_g = df_g_base.groupby('Data')['Carico_Esterno'].sum().reindex(all_days, fill_value=0).reset_index()
                 df_g.columns = ['Data', 'Carico_Esterno']
-                df_g = df_g.sort_values('Data', ascending=True) # Ordine rigorosamente crescente
+                df_g = df_g.sort_values('Data', ascending=True)
                 
                 fig = go.Figure(go.Bar(x=df_g['Data'].dt.strftime('%d/%m/%Y'), y=df_g['Carico_Esterno'], marker_color=GEAS_RED))
                 fig.update_layout(template="plotly_white", xaxis_title="Data")
@@ -544,11 +533,10 @@ elif page == "📈 Gestione Carico Esterno":
             df_storico = df_ext.sort_values('Data', ascending=False).copy()
             df_storico = df_storico.dropna(subset=['Data']) 
             
-            df_storico['Data'] = df_storico['Data'].dt.date
-            
+            # Utilizza DatetimeColumn originale per formattare senza toccare l'oggetto python base
             edited_df = st.data_editor(
                 df_storico, num_rows="dynamic", use_container_width=True, hide_index=True,
-                column_config={"Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY")}
+                column_config={"Data": st.column_config.DatetimeColumn("Data", format="DD/MM/YYYY")}
             )
             
             if not edited_df.equals(df_storico):
@@ -566,12 +554,20 @@ elif page == "📈 Gestione Carico Esterno":
 
     with col_ed2:
         st.subheader("Tracciamento Allenamenti (Diario Coach)")
-        # Creiamo una lista degli ultimi 14 giorni esatti, senza buchi
-        oggi = pd.to_datetime('today').normalize()
-        giorni_calendario = pd.date_range(end=oggi, periods=14, freq='D')[::-1] # Ordine decrescente (più recente in alto)
         
         df_storico_disp = df_ext.dropna(subset=['Data']).copy() if not df_ext.empty else pd.DataFrame(columns=['Data'])
         
+        # Calendario dinamico: va dalla data MASSIMA esistente a ritroso (massimo 30 giorni) 
+        # Cosi include sempre anche le date vecchie lette erroneamente nel futuro!
+        if not df_storico_disp.empty:
+            max_d = df_storico_disp['Data'].max()
+            min_d = df_storico_disp['Data'].min()
+            start_d = max(min_d, max_d - timedelta(days=30))
+            giorni_calendario = pd.date_range(start=start_d, end=max_d, freq='D')[::-1]
+        else:
+            oggi = pd.to_datetime('today').normalize()
+            giorni_calendario = pd.date_range(end=oggi, periods=14, freq='D')[::-1]
+            
         for g in giorni_calendario:
             dati_giorno = df_storico_disp[df_storico_disp['Data'] == g] if not df_storico_disp.empty else pd.DataFrame()
             data_str = g.strftime('%d/%m/%Y')
