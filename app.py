@@ -16,7 +16,7 @@ try:
 except ImportError:
     GSPREAD_AVAILABLE = False
 
-# --- CONFIGURAZIONI INIZIALI ---
+# --- CONFIGURAZIONI INIZIALI E GRUPPI ---
 st.set_page_config(layout="wide", page_title="GEAS BASKET - Dashboard Avanzata", page_icon="🏀")
 
 GEAS_RED = "#E3182D"
@@ -28,13 +28,24 @@ IMG_PATH = os.path.join(CURRENT_DIR, "image.png")
 CALENDAR_FILE = os.path.join(CURRENT_DIR, "calendar_data.json")
 EXT_LOAD_FILE = os.path.join(CURRENT_DIR, "external_load.csv")
 
-ROSTER = sorted([
+# Definizione dei roster in base al documento ufficiale
+ROSTER_U19 = [
     "Appetiti Arianna", "Trezzi Francesca", "Bettoni Rebecca", "Rovello Giorgia",
     "Magni Emilia", "Connelli Grace", "Bianchi Emma", "Alfieri Fiamma",
-    "Sacca Federica", "Fiani Carlotta", "Porcelli Paola", "Pozzi Rebecca",
-    "Raimondi Vittoria", "Trerotola Asia", "Villani Alice", "Sala Emma",
-    "Zanotti Anna", "Barchiellini Cecilia", "Cuomo Lara", "Turconi Margherita"
-])
+    "Sacca Federica", "Fiani Carlotta", "Porcelli Paola"
+]
+
+ROSTER_U17 = [
+    "Alfieri Fiamma", "Sacca Federica", "Pozzi Rebecca", "Raimondi Vittoria", 
+    "Trerotola Asia", "Fiani Carlotta", "Porcelli Paola", "Villani Alice", 
+    "Sala Emma", "Zanotti Anna", "Barchiellini Cecilia"
+]
+
+# Altre atlete presenti nel DB (es. U15 aggregate)
+ALTRE_ATLETE = ["Cuomo Lara", "Turconi Margherita"]
+
+# Roster Unico (senza duplicati, ordinato alfabeticamente)
+ROSTER = sorted(list(set(ROSTER_U19 + ROSTER_U17 + ALTRE_ATLETE)))
 
 # --- FUNZIONI GOOGLE SHEETS & LOCALI ---
 def get_gclient():
@@ -101,6 +112,7 @@ def save_calendar_data(data, url):
             
     with open(CALENDAR_FILE, 'w') as f: json.dump(data, f, indent=4)
 
+# FIX: ROBUSTEZZA CARICO ESTERNO (Evita crash da date sporche o assenti inserite dall'agente)
 def load_ext_load(url):
     client = get_gclient()
     sheet_id = get_sheet_id(url)
@@ -111,30 +123,39 @@ def load_ext_load(url):
             records = ws.get_all_records()
             if records:
                 df = pd.DataFrame(records)
-                # FIX Applicato: dayfirst=True per leggere correttamente le date europee da Google Sheets
-                df['Data'] = pd.to_datetime(df['Data'], errors='coerce', dayfirst=True).dt.normalize()
-                df = df.dropna(subset=['Data'])
-                return df
+                if 'Data' in df.columns:
+                    df['Data'] = pd.to_datetime(df['Data'].astype(str).str.strip(), errors='coerce', dayfirst=True).dt.normalize()
+                    df = df.dropna(subset=['Data'])
+                    df['Peso'] = pd.to_numeric(df['Peso'], errors='coerce').fillna(0)
+                    df['Minuti'] = pd.to_numeric(df['Minuti'], errors='coerce').fillna(0)
+                    df['Carico_Esterno'] = pd.to_numeric(df['Carico_Esterno'], errors='coerce').fillna(0)
+                    return df
         except gspread.WorksheetNotFound:
             pass
         except Exception as e:
-            pass
+            st.warning(f"Errore caricamento Carico Esterno: {e}")
 
     if os.path.exists(EXT_LOAD_FILE):
-        df = pd.read_csv(EXT_LOAD_FILE)
-        # FIX Applicato anche per il fallback locale
-        df['Data'] = pd.to_datetime(df['Data'], errors='coerce', dayfirst=True).dt.normalize()
-        df = df.dropna(subset=['Data'])
-        return df
+        try:
+            df = pd.read_csv(EXT_LOAD_FILE)
+            if 'Data' in df.columns:
+                df['Data'] = pd.to_datetime(df['Data'].astype(str).str.strip(), errors='coerce', dayfirst=True).dt.normalize()
+                df = df.dropna(subset=['Data'])
+                return df
+        except Exception:
+            pass
     return pd.DataFrame(columns=['Data', 'Esercitazione', 'Peso', 'Minuti', 'Carico_Esterno'])
 
+# FIX: SALVATAGGIO SICURO (Niente date corrotte o valori nulli matematici)
 def save_ext_load(df, url):
     client = get_gclient()
     sheet_id = get_sheet_id(url)
     df_out = df.copy()
     
-    # Sicurezza extra in scrittura
+    df_out['Data'] = pd.to_datetime(df_out['Data'], errors='coerce').dt.normalize()
     df_out = df_out.dropna(subset=['Data']) 
+    df_out['Data'] = df_out['Data'].dt.strftime('%Y-%m-%d')
+    df_out = df_out.fillna('')
     
     if client and sheet_id:
         try:
@@ -144,16 +165,14 @@ def save_ext_load(df, url):
             except gspread.WorksheetNotFound:
                 ws = sh.add_worksheet(title="Carico_Esterno", rows="1000", cols="5")
             
-            df_out['Data'] = df_out['Data'].dt.strftime('%Y-%m-%d')
             rows = [df_out.columns.values.tolist()] + df_out.values.tolist()
-            
             ws.clear()
             try:
                 ws.update(values=rows, range_name="A1")
             except TypeError:
                 ws.update("A1", rows)
         except Exception as e:
-            st.error(f"Impossibile salvare il Carico Esterno su Google Sheets. Errore: {e}")
+            st.error(f"Impossibile salvare su Google Sheets. Errore: {e}")
 
     df_out.to_csv(EXT_LOAD_FILE, index=False)
 
@@ -213,6 +232,7 @@ def process_data(df_raw, col_data, col_atleta, col_rpe):
     
     return df
 
+# AGGIORNAMENTO: Supporto logica a gruppi U19/U17
 def process_daily_data(df_base, cal_data, default_duration=90):
     if df_base.empty: return pd.DataFrame()
     
@@ -225,26 +245,65 @@ def process_daily_data(df_base, cal_data, default_duration=90):
     
     for atleta in ROSTER:
         atleta_data = df_base[df_base['Atleta'] == atleta].copy()
+        
+        # Determina a quali gruppi appartiene l'atleta
+        is_u19 = atleta in ROSTER_U19
+        is_u17 = atleta in ROSTER_U17
+        
         for d in all_dates:
             d_str = d.strftime('%Y-%m-%d')
-            day_info = cal_data.get(d_str, {'type': 'Allenamento', 'duration': default_duration, 'rest': False})
+            day_info = cal_data.get(d_str, {})
             
-            if day_info.get('rest', False):
-                new_rows.append({'Data': d, 'Atleta': atleta, 'RPE': 0, 'Durata': 0, 'Tipo': 'Riposo'})
+            # Recupera le info del giorno per il gruppo primario dell'atleta
+            # Se è in entrambi i gruppi, diamo priorità all'evento più gravoso (es. Partita vince su Allenamento)
+            gruppi_info = []
+            if is_u19 and "U19" in day_info: gruppi_info.append(day_info["U19"])
+            if is_u17 and "U17" in day_info: gruppi_info.append(day_info["U17"])
+            if "Global" in day_info: gruppi_info.append(day_info["Global"]) # Retrocompatibilità
+            
+            # Se non ci sono info specifiche, usa un default globale o il dizionario base (se vecchio formato)
+            if non gruppi_info:
+                if 'type' in day_info:  # Vecchio formato
+                    g_info = day_info
+                else:
+                    g_info = {'type': 'Allenamento', 'duration': default_duration, 'rest': False}
+            else:
+                # Logica priorità: Partita > Allenamento > Riposo
+                has_match = any(g.get('type') == 'Partita' for g in gruppi_info)
+                has_train = any(g.get('type') == 'Allenamento' for g in gruppi_info)
+                
+                if has_match:
+                    g_info = next(g for g in gruppi_info if g.get('type') == 'Partita')
+                elif has_train:
+                    g_info = next(g for g in gruppi_info if g.get('type') == 'Allenamento')
+                else:
+                    g_info = gruppi_info[0]
+
+            if g_info.get('rest', False):
+                new_rows.append({'Data': d, 'Atleta': atleta, 'RPE': 0, 'Durata': 0, 'Tipo': 'Riposo', 'Gruppo_Tag': 'Riposo'})
             else:
                 rpe_row = atleta_data[atleta_data['Data'] == d]
-                tipo_giorno = day_info.get('type', 'Allenamento')
+                tipo_giorno = g_info.get('type', 'Allenamento')
                 
-                if tipo_giorno == 'Partita': durata = day_info.get('player_minutes', {}).get(atleta, 40)
-                else: durata = day_info.get('duration', default_duration)
+                if tipo_giorno == 'Partita': durata = g_info.get('player_minutes', {}).get(atleta, 40)
+                else: durata = g_info.get('duration', default_duration)
                 
                 if not rpe_row.empty:
-                    new_rows.append({'Data': d, 'Atleta': atleta, 'RPE': rpe_row['RPE'].mean(), 'Durata': durata, 'Tipo': tipo_giorno})
+                    new_rows.append({'Data': d, 'Atleta': atleta, 'RPE': rpe_row['RPE'].mean(), 'Durata': durata, 'Tipo': tipo_giorno, 'Gruppo_Tag': tipo_giorno})
                 else:
-                    new_rows.append({'Data': d, 'Atleta': atleta, 'RPE': 0, 'Durata': durata, 'Tipo': f"{tipo_giorno} (Assente)"})
+                    new_rows.append({'Data': d, 'Atleta': atleta, 'RPE': 0, 'Durata': durata, 'Tipo': f"{tipo_giorno} (Assente)", 'Gruppo_Tag': tipo_giorno})
                     
     df_full = pd.DataFrame(new_rows)
     df_full['sRPE'] = df_full['RPE'] * df_full['Durata']
+    
+    # Assegna il gruppo per i filtri dashboard
+    def assign_primary_group(name):
+        if name in ROSTER_U19 and name in ROSTER_U17: return "Doppio Roster (U19/U17)"
+        elif name in ROSTER_U19: return "U19"
+        elif name in ROSTER_U17: return "U17"
+        return "Altro"
+        
+    df_full['Gruppo'] = df_full['Atleta'].apply(assign_primary_group)
     return df_full
 
 def calcola_metriche(df_atleta):
@@ -311,9 +370,22 @@ if page == "🏠 Home Squadra":
     st.title("Panoramica Globale U19/U17")
     
     if not df_full.empty:
+        # Filtro Gruppo
+        filter_group = st.radio("Filtra Vista per Gruppo:", ["Tutta la Squadra", "Solo U19", "Solo U17"], horizontal=True)
+        
+        if filter_group == "Solo U19":
+            roster_attivo = ROSTER_U19
+            df_view = df_full[df_full['Atleta'].isin(ROSTER_U19)]
+        elif filter_group == "Solo U17":
+            roster_attivo = ROSTER_U17
+            df_view = df_full[df_full['Atleta'].isin(ROSTER_U17)]
+        else:
+            roster_attivo = ROSTER
+            df_view = df_full
+
         st.subheader("🔴🟡🟢 Status Infortuni (ACWR EWMA Odierno)")
         cols = st.columns(4)
-        for i, atleta in enumerate(ROSTER):
+        for i, atleta in enumerate(roster_attivo):
             df_a = calcola_metriche(df_full[df_full['Atleta'] == atleta])
             if not df_a.empty:
                 acwr = df_a.iloc[-1]['ACWR_EWMA']
@@ -331,20 +403,51 @@ if page == "🏠 Home Squadra":
         tf = st.radio("Seleziona Vista Temporale:", ["Ultimi 7 Giorni", "Ultimi 30 Giorni", "Tutto lo storico"], horizontal=True)
         oggi = pd.to_datetime('today').normalize()
         
-        df_team = df_full.groupby('Data')['sRPE'].mean().reset_index()
-        
-        if tf == "Ultimi 7 Giorni": df_team_filt = df_team[df_team['Data'] >= oggi - timedelta(days=7)]
-        elif tf == "Ultimi 30 Giorni": df_team_filt = df_team[df_team['Data'] >= oggi - timedelta(days=30)]
-        else: df_team_filt = df_team
+        # AGGIUNTA: Determiniamo il colore della barra (Rosso se è stata una partita per questo gruppo)
+        def get_bar_color(date, group_filter):
+            date_str = date.strftime('%Y-%m-%d')
+            day_info = calendar_data.get(date_str, {})
             
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=df_team_filt['Data'].dt.strftime('%d/%m'), y=df_team_filt['sRPE'], marker_color=GEAS_GOLD, text=df_team_filt['sRPE'].round(0), textposition='auto'))
-        fig.update_layout(template="plotly_white", margin=dict(t=20, b=20, l=20, r=20))
-        st.plotly_chart(fig, use_container_width=True)
+            # Verifica se ci sono state partite in base al filtro
+            if group_filter == "Solo U19":
+                if day_info.get("U19", {}).get("type") == "Partita": return GEAS_RED
+            elif group_filter == "Solo U17":
+                if day_info.get("U17", {}).get("type") == "Partita": return GEAS_RED
+            else:
+                # Se vista globale, diventa rosso se QUALSIASI dei due gruppi aveva partita (o evento globale)
+                if day_info.get("U19", {}).get("type") == "Partita" or \
+                   day_info.get("U17", {}).get("type") == "Partita" or \
+                   day_info.get("Global", {}).get("type") == "Partita" or \
+                   day_info.get("type") == "Partita": # retrocompatibilità
+                    return GEAS_RED
+            return GEAS_GOLD
+        
+        df_team = df_view.groupby('Data')['sRPE'].mean().reset_index()
+        if tf == "Ultimi 7 Giorni": df_team_filt = df_team[df_team['Data'] >= oggi - timedelta(days=7)].copy()
+        elif tf == "Ultimi 30 Giorni": df_team_filt = df_team[df_team['Data'] >= oggi - timedelta(days=30)].copy()
+        else: df_team_filt = df_team.copy()
+            
+        if not df_team_filt.empty:
+            df_team_filt['Color'] = df_team_filt['Data'].apply(lambda d: get_bar_color(d, filter_group))
+            
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=df_team_filt['Data'].dt.strftime('%d/%m'), 
+                y=df_team_filt['sRPE'], 
+                marker_color=df_team_filt['Color'], 
+                text=df_team_filt['sRPE'].round(0), 
+                textposition='auto',
+                hovertemplate="Data: %{x}<br>Media sRPE: %{y}<extra></extra>"
+            ))
+            fig.update_layout(template="plotly_white", margin=dict(t=20, b=20, l=20, r=20))
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown(f"*Legenda Colori (Media Squadra): <span style='color:{GEAS_GOLD}'>■ Allenamento</span> | <span style='color:{GEAS_RED}'>■ Partita (Media influenzata dai minutaggi)</span>*", unsafe_allow_html=True)
+        else:
+            st.info("Nessun dato nel periodo selezionato.")
         
         st.markdown("---")
         st.subheader("🔍 Esamina RPE Giornaliero per Atleta")
-        atleta_home_sel = st.selectbox("Seleziona Giocatrice per vedere il suo dettaglio giornaliero", ROSTER)
+        atleta_home_sel = st.selectbox("Seleziona Giocatrice per vedere il suo dettaglio giornaliero", roster_attivo)
         
         if atleta_home_sel:
             df_a_home = df_full[df_full['Atleta'] == atleta_home_sel].copy()
@@ -356,8 +459,8 @@ if page == "🏠 Home Squadra":
             colors_h = []
             for tipo in df_a_home['Tipo']:
                 if 'Riposo' in tipo: colors_h.append('gray')
-                elif 'Partita' in tipo: colors_h.append(GEAS_GOLD)
-                elif 'Assente' in tipo: colors_h.append('red')
+                elif 'Partita' in tipo: colors_h.append(GEAS_RED)
+                elif 'Assente' in tipo: colors_h.append('red') # Bordo o opacità diversa potrebbe essere meglio
                 else: colors_h.append('#3498db')
                 
             fig_a.add_trace(go.Bar(
@@ -373,7 +476,7 @@ if page == "🏠 Home Squadra":
                 
             fig_a.update_layout(template="plotly_white", yaxis_range=[0, 11], margin=dict(t=20, b=20, l=20, r=20))
             st.plotly_chart(fig_a, use_container_width=True)
-            st.markdown("*Legenda Colori: <span style='color:#3498db'>■ Allenamento</span> | <span style='color:#D2BFA4'>■ Partita</span> | <span style='color:gray'>■ Riposo</span> | <span style='color:red'>■ Assente/Mancante</span>*", unsafe_allow_html=True)
+            st.markdown(f"*Legenda Colori: <span style='color:#3498db'>■ Allenamento</span> | <span style='color:{GEAS_RED}'>■ Partita</span> | <span style='color:gray'>■ Riposo</span> | <span style='color:red'>■ Assente/Mancante</span>*", unsafe_allow_html=True)
     else:
         st.warning("Nessun dato RPE caricato.")
 
@@ -424,28 +527,34 @@ elif page == "📈 Gestione Carico Esterno":
             df_storico = df_ext.sort_values('Data', ascending=False).copy()
             df_storico = df_storico.dropna(subset=['Data']) 
             
+            # FIX DATA: Usiamo date() puro per rimuovere le ore e renderlo leggibile in Streamlit Data Editor
+            df_storico['Data'] = df_storico['Data'].dt.date
+            
             edited_df = st.data_editor(
                 df_storico, num_rows="dynamic", use_container_width=True, hide_index=True,
-                column_config={"Data": st.column_config.DatetimeColumn("Data", format="DD/MM/YYYY")}
+                column_config={"Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY")}
             )
             
             if not edited_df.equals(df_storico):
-                # FIX Applicato: Conversione solida delle date e numeri per evitare crash e perdita dati in salvataggio
-                edited_df['Data'] = pd.to_datetime(edited_df['Data'], errors='coerce', dayfirst=True)
+                # Riconversione sicura post-modifica
+                edited_df['Data'] = pd.to_datetime(edited_df['Data'], errors='coerce').dt.normalize()
                 edited_df = edited_df.dropna(subset=['Data'])
-                edited_df['Carico_Esterno'] = pd.to_numeric(edited_df['Peso'], errors='coerce') * pd.to_numeric(edited_df['Minuti'], errors='coerce')
+                edited_df['Peso'] = pd.to_numeric(edited_df['Peso'], errors='coerce').fillna(0)
+                edited_df['Minuti'] = pd.to_numeric(edited_df['Minuti'], errors='coerce').fillna(0)
+                edited_df['Carico_Esterno'] = edited_df['Peso'] * edited_df['Minuti']
+                
                 save_ext_load(edited_df, url_google)
                 st.success("Modifiche salvate con successo!")
                 st.rerun()
 
         with col_ed2:
             st.subheader("Tracciamento Allenamenti (Diario Coach)")
-            df_storico = df_storico.dropna(subset=['Data'])
-            giorni = df_storico['Data'].unique()
+            df_storico_disp = df_storico.dropna(subset=['Data']).copy()
+            giorni = df_storico_disp['Data'].unique()
             for g in giorni[:10]:
                 if pd.isna(g): continue
-                dati_giorno = df_storico[df_storico['Data'] == g]
-                data_str = pd.to_datetime(g).strftime('%d/%m/%Y')
+                dati_giorno = df_storico_disp[df_storico_disp['Data'] == g]
+                data_str = g.strftime('%d/%m/%Y')
                 carico_tot = dati_giorno['Carico_Esterno'].sum()
                 with st.expander(f"🏀 Allenamento del {data_str} (Carico Tot: {carico_tot})"):
                     for _, row in dati_giorno.iterrows():
@@ -496,7 +605,9 @@ elif page == "📊 Compliance % (Assenze)":
         for d in pd.date_range(start=df_base['Data'].min(), end=oggi):
             d_str = d.strftime('%Y-%m-%d')
             info = calendar_data.get(d_str, {})
-            if not info.get('rest', False): giorni_lavoro.append(d)
+            # Approssimazione globale per la compliance: se almeno uno dei gruppi ha lavorato, lo consideriamo giorno lavorativo generale
+            rest_global = info.get('Global', info).get('rest', False)
+            if not rest_global: giorni_lavoro.append(d)
                 
         tot_giorni = len(giorni_lavoro)
         comp_data = []
@@ -528,37 +639,56 @@ elif page == "📅 Calendario & Partite":
         data_sel = st.date_input("Seleziona Data", datetime.today())
         data_str = data_sel.strftime('%Y-%m-%d')
         
-        dati_giorno = calendar_data.get(data_str, {'type': 'Allenamento', 'duration': durata_globale, 'rest': False})
+        # Recupera o inizializza i dati del giorno
+        if data_str not in calendar_data:
+            calendar_data[data_str] = {
+                "U19": {'type': 'Allenamento', 'duration': durata_globale, 'rest': False},
+                "U17": {'type': 'Allenamento', 'duration': durata_globale, 'rest': False}
+            }
+        
+        target_group = st.selectbox("Imposta programma per:", ["U19", "U17"])
+        
+        # Retrocompatibilità (se il json è nel vecchio formato, lo wrappa nel nuovo)
+        if "type" in calendar_data[data_str]:
+            old_data = calendar_data[data_str].copy()
+            calendar_data[data_str] = {"U19": old_data, "U17": old_data}
+
+        dati_target = calendar_data[data_str].get(target_group, {'type': 'Allenamento', 'duration': durata_globale, 'rest': False})
+        
         idx_tipo = 0
-        if dati_giorno.get('type') == 'Partita': idx_tipo = 1
-        elif dati_giorno.get('rest'): idx_tipo = 2
+        if dati_target.get('type') == 'Partita': idx_tipo = 1
+        elif dati_target.get('rest'): idx_tipo = 2
             
-        tipo_giorno = st.radio("Cosa è previsto per oggi?", ["Allenamento", "Partita", "Riposo Totale"], index=idx_tipo)
+        tipo_giorno = st.radio("Cosa è previsto?", ["Allenamento", "Partita", "Riposo Totale"], index=idx_tipo)
                                
         if tipo_giorno == "Allenamento":
-            durata_all = st.number_input("Minuti Allenamento", min_value=0, value=dati_giorno.get('duration', durata_globale))
+            durata_all = st.number_input(f"Minuti Allenamento ({target_group})", min_value=0, value=dati_target.get('duration', durata_globale))
             if st.button("Salva Allenamento"):
-                calendar_data[data_str] = {'type': 'Allenamento', 'duration': durata_all, 'rest': False}
+                calendar_data[data_str][target_group] = {'type': 'Allenamento', 'duration': durata_all, 'rest': False}
                 save_calendar_data(calendar_data, url_google)
-                st.success("Salvato!")
+                st.success(f"Salvato Allenamento per {target_group}!")
                 st.rerun()
                 
         elif tipo_giorno == "Riposo Totale":
             if st.button("Salva come Riposo"):
-                calendar_data[data_str] = {'type': 'Riposo', 'duration': 0, 'rest': True}
+                calendar_data[data_str][target_group] = {'type': 'Riposo', 'duration': 0, 'rest': True}
                 save_calendar_data(calendar_data, url_google)
-                st.success("Giorno di riposo registrato!")
+                st.success(f"Giorno di riposo registrato per {target_group}!")
                 st.rerun()
                 
         elif tipo_giorno == "Partita":
-            st.info("Imposta il minutaggio esatto di ogni atleta in partita (Default: 40')")
-            player_mins = dati_giorno.get('player_minutes', {})
+            st.info(f"Imposta il minutaggio esatto atlete {target_group} (Default: 40')")
+            player_mins = dati_target.get('player_minutes', {})
+            
+            # Mostra solo il roster del gruppo selezionato
+            roster_da_mostrare = ROSTER_U19 if target_group == "U19" else ROSTER_U17
+            
             with st.form("minutaggi_partita"):
                 new_mins = {}
-                for atleta in ROSTER:
+                for atleta in roster_da_mostrare:
                     new_mins[atleta] = st.number_input(f"{atleta}", min_value=0, max_value=60, value=player_mins.get(atleta, 40))
-                if st.form_submit_button("Salva Minutaggi Partita"):
-                    calendar_data[data_str] = {'type': 'Partita', 'duration': 40, 'rest': False, 'player_minutes': new_mins}
+                if st.form_submit_button(f"Salva Partita {target_group}"):
+                    calendar_data[data_str][target_group] = {'type': 'Partita', 'duration': 40, 'rest': False, 'player_minutes': new_mins}
                     save_calendar_data(calendar_data, url_google)
                     st.success("Salvato!")
                     st.rerun()
@@ -566,11 +696,21 @@ elif page == "📅 Calendario & Partite":
     with col2:
         st.subheader("Registro Configurazioni")
         if calendar_data:
-            df_cal = pd.DataFrame.from_dict(calendar_data, orient='index').reset_index()
-            df_cal.columns = ['Data', 'Tipo', 'Durata Base', 'Riposo', 'Minuti Giocatori']
-            df_cal['Data'] = pd.to_datetime(df_cal['Data'])
-            df_cal = df_cal.sort_values('Data', ascending=False)
-            st.dataframe(df_cal[['Data', 'Tipo', 'Durata Base', 'Riposo']].style.format({"Data": lambda t: t.strftime("%d/%m/%Y")}), use_container_width=True)
+            # Creiamo un dataframe di visualizzazione semplificato
+            disp_data = []
+            for d, v in calendar_data.items():
+                if "type" in v: # vecchio formato
+                    disp_data.append({'Data': d, 'Gruppo': 'Global', 'Tipo': v.get('type')})
+                else:
+                    if "U19" in v: disp_data.append({'Data': d, 'Gruppo': 'U19', 'Tipo': v['U19'].get('type')})
+                    if "U17" in v: disp_data.append({'Data': d, 'Gruppo': 'U17', 'Tipo': v['U17'].get('type')})
+            
+            if disp_data:
+                df_cal = pd.DataFrame(disp_data)
+                df_cal['Data'] = pd.to_datetime(df_cal['Data'])
+                df_cal = df_cal.sort_values('Data', ascending=False)
+                st.dataframe(df_cal.style.format({"Data": lambda t: t.strftime("%d/%m/%Y")}), use_container_width=True)
+                
             if st.button("Resetta tutto il calendario"):
                 save_calendar_data({}, url_google)
                 st.rerun()
